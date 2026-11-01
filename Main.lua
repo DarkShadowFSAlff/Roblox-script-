@@ -2,16 +2,15 @@
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local Lighting = game:GetService("Lighting")
+local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 
--- Menggunakan CoreGui jika diizinkan executor, atau PlayerGui sebagai cadangan
 local targetParent = (gethui and gethui()) or CoreGui or player:WaitForChild("PlayerGui")
 
 if targetParent:FindFirstChild("UltimateToolGui") then
     targetParent.UltimateToolGui:Destroy()
 end
 
--- Membuat ScreenGui Utama dengan Proteksi Force GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "UltimateToolGui"
 screenGui.ResetOnSpawn = false
@@ -27,10 +26,9 @@ screenGui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
--- 1. TOMBOL KECIL MINIMIZE (Muncul di Tengah Atas saat diminimize)
+-- Tombol Minimize Kotak Kecil di Tengah Atas
 local minIcon = Instance.new("TextButton")
 minIcon.Size = UDim2.new(0, 45, 0, 45)
--- Posisi awal di tengah atas layar
 minIcon.Position = UDim2.new(0.5, -22, 0, 10)
 minIcon.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 minIcon.BorderColor3 = Color3.fromRGB(60, 60, 60)
@@ -44,10 +42,9 @@ minIcon.Draggable = true
 minIcon.Visible = false
 minIcon.Parent = screenGui
 
--- 2. PANEL UTAMA (Kompak, Proporsional, Muncul di Tengah Atas)
+-- Panel Utama
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 180, 0, 260)
--- Posisi pas di tengah atas layar agar mudah dijangkau
+frame.Size = UDim2.new(0, 180, 0, 280)
 frame.Position = UDim2.new(0.5, -90, 0, 10)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BorderColor3 = Color3.fromRGB(50, 50, 50)
@@ -56,7 +53,6 @@ frame.Active = true
 frame.Draggable = true
 frame.Parent = screenGui
 
--- Header / Bar Atas (Kontrol di Tengah)
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 26)
 header.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
@@ -74,7 +70,6 @@ title.Text = "Menu Pro"
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
--- Tombol Kontrol di Tengah Header (Minimize [-] dan Close [X])
 local minBtn = Instance.new("TextButton")
 minBtn.Size = UDim2.new(0, 22, 0, 22)
 minBtn.Position = UDim2.new(0.5, -23, 0, 2)
@@ -95,7 +90,6 @@ closeBtn.Font = Enum.Font.SourceSansBold
 closeBtn.Text = "X"
 closeBtn.Parent = header
 
--- Container Utama (Scrolling)
 local container = Instance.new("ScrollingFrame")
 container.Size = UDim2.new(1, 0, 1, -26)
 container.Position = UDim2.new(0, 0, 0, 26)
@@ -117,7 +111,7 @@ uiPadding.PaddingTop = UDim.new(0, 6)
 uiPadding.PaddingBottom = UDim.new(0, 6)
 uiPadding.Parent = container
 
--- --- BAGIAN 1: WAYPOINT SYSTEM ---
+-- --- WAYPOINT SYSTEM ---
 local addBtn = Instance.new("TextButton")
 addBtn.Size = UDim2.new(0.9, 0, 0, 28)
 addBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 220)
@@ -135,7 +129,6 @@ divider1.BorderSizePixel = 0
 divider1.LayoutOrder = 2
 divider1.Parent = container
 
--- Fungsi untuk membuat elemen waypoint dengan tombol Delete [X]
 local function addWaypointItem(name, cframe)
     local itemFrame = Instance.new("Frame")
     itemFrame.Size = UDim2.new(0.9, 0, 0, 26)
@@ -143,7 +136,6 @@ local function addWaypointItem(name, cframe)
     itemFrame.LayoutOrder = 3
     itemFrame.Parent = container
 
-    -- Tombol Teleport ke Lokasi
     local tpBtn = Instance.new("TextButton")
     tpBtn.Size = UDim2.new(0.78, 0, 1, 0)
     tpBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
@@ -154,19 +146,30 @@ local function addWaypointItem(name, cframe)
     tpBtn.TextXAlignment = Enum.TextXAlignment.Left
     tpBtn.Parent = itemFrame
 
-    -- Padding teks di tombol TP agar rapi
     local tpPadding = Instance.new("UIPadding")
     tpPadding.PaddingLeft = UDim.new(0, 6)
     tpPadding.Parent = tpBtn
 
+    -- FIX TELEPORT MELEDAK & KEMBALI KE AWAL (Anti-Rubberband & Velocity Reset)
     tpBtn.MouseButton1Click:Connect(function()
         local character = player.Character
         if character and character:FindFirstChild("HumanoidRootPart") then
-            character.HumanoidRootPart.CFrame = cframe
+            local hrp = character.HumanoidRootPart
+            
+            -- Matikan kecepatan fisik sementara agar tidak "meledak" atau mental
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            
+            -- Eksekusi Teleportasi CFrame
+            hrp.CFrame = cframe
+            
+            -- Reset ulang kecepatan setelah teleport agar stabil
+            task.defer(function()
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
         end
     end)
 
-    -- Tombol Hapus Waypoint [X]
     local delBtn = Instance.new("TextButton")
     delBtn.Size = UDim2.new(0.18, 0, 1, 0)
     delBtn.Position = UDim2.new(0.82, 0, 0, 0)
@@ -182,23 +185,35 @@ local function addWaypointItem(name, cframe)
     end)
 end
 
--- Aksi Tombol Simpan dengan Nama Custom (Fallback aman untuk HP)
+-- Tombol Simpan dengan Prompt Nama Custom yang Aman untuk HP
 addBtn.MouseButton1Click:Connect(function()
     local character = player.Character
     if character and character:FindFirstChild("HumanoidRootPart") then
         local count = #container:GetChildren() - 3
         local defaultName = "Lokasi " .. (count + 1)
         
-        -- Menggunakan inputbox bawaan executor jika tersedia, atau nama otomatis
-        local success, customName = pcall(function()
-            return game:GetService("UserInputService"):GetFocusedTextBox() -- placeholder aman
+        -- Memunculkan Prompt Bawaan Roblox untuk Input Nama Custom
+        pcall(function()
+            local promptResult = StarterGui:SetCore("Promptář", {
+                Title = "Nama Waypoint",
+                Text = "Masukkan nama untuk lokasi ini:",
+                PlaceholderText = defaultName,
+                Callback = function(text)
+                    if text and text ~= "" then
+                        addWaypointItem(text, character.HumanoidRootPart.CFrame)
+                    else
+                        addWaypointItem(defaultName, character.HumanoidRootPart.CFrame)
+                    end
+                end
+            })
         end)
         
+        -- Fallback jika Prompt tidak muncul di beberapa game/executor
+        -- Langsung buat dengan nama default berurutan
         addWaypointItem(defaultName, character.HumanoidRootPart.CFrame)
     end
 end)
 
--- Garis Pembatas ke Menu FPS Booster
 local divider2 = Instance.new("Frame")
 divider2.Size = UDim2.new(0.9, 0, 0, 1)
 divider2.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
@@ -206,7 +221,7 @@ divider2.BorderSizePixel = 0
 divider2.LayoutOrder = 4
 divider2.Parent = container
 
--- --- BAGIAN 2: FPS & LIGHTING OPTIMIZER ---
+-- --- FPS & LIGHTING OPTIMIZER ---
 local fpsHeader = Instance.new("TextLabel")
 fpsHeader.Size = UDim2.new(0.9, 0, 0, 20)
 fpsHeader.BackgroundTransparency = 1
@@ -217,7 +232,6 @@ fpsHeader.Text = "--- Optimasi Grafik ---"
 fpsHeader.LayoutOrder = 5
 fpsHeader.Parent = container
 
--- Tombol Boost FPS (Mematikan bayangan, kabut, dan meratakan tekstur agar ringan)
 local boostBtn = Instance.new("TextButton")
 boostBtn.Size = UDim2.new(0.9, 0, 0, 28)
 boostBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 40)
@@ -229,20 +243,18 @@ boostBtn.LayoutOrder = 6
 boostBtn.Parent = container
 
 boostBtn.MouseButton1Click:Connect(function()
-    -- Mematikan efek pencahayaan berat
     Lighting.GlobalShadows = false
     Lighting.Brightness = 1
     if Lighting:FindFirstChildOfClass("Sky") then
         Lighting:FindFirstChildOfClass("Sky"):Destroy()
     end
     
-    -- Menurunkan kualitas material part di game agar ringan
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
             obj.Material = Enum.Material.SmoothPlastic
             obj.CastShadow = false
         elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") then
-            obj.Enabled = false -- Mematikan partikel berat penyebab lag
+            obj.Enabled = false
         end
     end
     
@@ -250,23 +262,22 @@ boostBtn.MouseButton1Click:Connect(function()
     boostBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 end)
 
--- --- FUNGSI MINIMIZE / RESTORE KE TENGAH ATAS ---
+-- Minimize / Restore
 local function toggleMinimize()
     local isMinimized = frame.Visible
     frame.Visible = not isMinimized
     minIcon.Visible = isMinimized
     
     if isMinimized then
-        minIcon.Position = frame.Position -- Kotak kecil muncul tepat di posisi terakhir panel
+        minIcon.Position = frame.Position
     else
-        frame.Position = minIcon.Position -- Saat dibuka, langsung muncul dari posisi atas
+        frame.Position = minIcon.Position
     end
 end
 
 minBtn.MouseButton1Click:Connect(toggleMinimize)
 minIcon.MouseButton1Click:Connect(toggleMinimize)
 
--- Tombol Close [X] Utama
 closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
