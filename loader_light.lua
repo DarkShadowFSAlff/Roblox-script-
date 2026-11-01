@@ -1,4 +1,3 @@
--- Ganti URL di bawah dengan Link Raw GitHub repository Anda yang sebenarnya
 local baseURL = "https://raw.githubusercontent.com/DarkShadowFSAlff/Roblox-script-/main/"
 
 local Players = game:GetService("Players")
@@ -17,7 +16,6 @@ screenGui.Name = "UltimateToolGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetParent
 
--- Tombol Minimize
 local minIcon = Instance.new("TextButton")
 minIcon.Size = UDim2.new(0, 45, 0, 45)
 minIcon.Position = UDim2.new(0.5, -22, 0, 10)
@@ -30,7 +28,6 @@ minIcon.Draggable = true
 minIcon.Visible = false
 minIcon.Parent = screenGui
 
--- Panel Utama
 local frame = Instance.new("Frame")
 frame.Size = UDim2.new(0, 210, 0, 340)
 frame.Position = UDim2.new(0.5, -105, 0, 10)
@@ -57,7 +54,6 @@ closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 closeBtn.Text = "X"
 closeBtn.Parent = header
 
--- 3 Tab Header
 local tabHeader = Instance.new("Frame")
 tabHeader.Size = UDim2.new(1, 0, 0, 30)
 tabHeader.Position = UDim2.new(0, 0, 0, 26)
@@ -103,20 +99,34 @@ tab3Btn.MouseButton1Click:Connect(function()
     pages[1].Visible, pages[2].Visible, pages[3].Visible = false, false, true
 end)
 
--- Memuat Modul dari GitHub secara Aman
-pcall(function()
-    local wpMod = loadstring(game:HttpGet(baseURL .. "waypoint.lua"))()
-    wpMod.Init(pages[1], player, HttpService)
-end)
+-- Download & Inisialisasi Modul dari GitHub
+task.spawn(function()
+    local successWp, wpMod = pcall(function()
+        return loadstring(game:HttpGet(baseURL .. "waypoint.lua"))()
+    end)
+    if successWp and wpMod then
+        wpMod.Init(pages[1], player, HttpService)
+    else
+        warn("Gagal memuat waypoint.lua")
+    end
 
-pcall(function()
-    local perfMod = loadstring(game:HttpGet(baseURL .. "performance.lua"))()
-    perfMod.Init(pages[2], Lighting, Players, player)
-end)
+    local successPerf, perfMod = pcall(function()
+        return loadstring(game:HttpGet(baseURL .. "performance.lua"))()
+    end)
+    if successPerf and perfMod then
+        perfMod.Init(pages[2], Lighting, Players, player)
+    else
+        warn("Gagal memuat performance.lua")
+    end
 
-pcall(function()
-    local speedMod = loadstring(game:HttpGet(baseURL .. "speed.lua"))()
-    speedMod.Init(pages[3], player, RunService)
+    local successSpd, speedMod = pcall(function()
+        return loadstring(game:HttpGet(baseURL .. "speed.lua"))()
+    end)
+    if successSpd and speedMod then
+        speedMod.Init(pages[3], player, RunService)
+    else
+        warn("Gagal memuat speed.lua")
+    end
 end)
 
 minBtn.MouseButton1Click:Connect(function()
