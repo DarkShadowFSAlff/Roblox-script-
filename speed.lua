@@ -1,7 +1,6 @@
 local SpeedModule = {}
 
 function SpeedModule.Init(tab, player, RunService)
-	-- UI
 	local speedLabel = Instance.new("TextLabel")
 	speedLabel.Size = UDim2.new(0.9, 0, 0, 20)
 	speedLabel.BackgroundTransparency = 1
@@ -71,7 +70,7 @@ function SpeedModule.Init(tab, player, RunService)
 	end
 
 	local function startSpeed(speed)
-		stopSpeed() -- pastikan bersih dulu
+		stopSpeed()
 
 		targetCustomSpeed = speed
 		isActive = true
@@ -84,31 +83,76 @@ function SpeedModule.Init(tab, player, RunService)
 			local hrp = char:FindFirstChild("HumanoidRootPart")
 			if not humanoid or not hrp or humanoid.Health <= 0 then return end
 
-			-- Batasi WalkSpeed normal (agar tidak terlalu ekstrem)
-			humanoid.WalkSpeed = math.clamp(targetCustomSpeed, 16, 120)
+			-- WalkSpeed normal (aman)
+			humanoid.WalkSpeed = math.clamp(targetCustomSpeed, 16, 100)
 
-			-- Mode super speed (CFrame) hanya jika > 120
-			if targetCustomSpeed > 120 and humanoid.MoveDirection.Magnitude > 0.1 then
+			-- Super speed mode (pakai velocity, bukan CFrame)
+			if targetCustomSpeed > 100 and humanoid.MoveDirection.Magnitude > 0.05 then
 				local moveDir = humanoid.MoveDirection.Unit
+				local currentVel = hrp.AssemblyLinearVelocity
+				local desiredSpeed = targetCustomSpeed
 
+				-- ======================
+				-- RAYCAST PREDIKTIF + MULTI RAY
+				-- ======================
 				local raycastParams = RaycastParams.new()
 				raycastParams.FilterDescendantsInstances = {char}
 				raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 				raycastParams.IgnoreWater = true
 
-				-- Deteksi tembok di depan
-				local rayDistance = math.clamp(targetCustomSpeed * dt * 1.2, 3, 8)
-				local raycastResult = workspace:Raycast(hrp.Position, moveDir * rayDistance, raycastParams)
+				-- Jarak ray menyesuaikan kecepatan (penting!)
+				local lookAhead = math.clamp(desiredSpeed * dt * 1.8, 2.5, 12)
 
-				if raycastResult then
-					-- Ada tembok → hentikan gerakan horizontal (anti bounce)
-					local vel = hrp.AssemblyLinearVelocity
-					hrp.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0)
+				local function cast(offset)
+					local origin = hrp.Position + offset
+					return workspace:Raycast(origin, moveDir * lookAhead, raycastParams)
+				end
+
+				-- 3 ray: tengah, kiri, kanan
+				local hitCenter = cast(Vector3.zero)
+				local hitLeft   = cast(hrp.CFrame.RightVector * -1.2)
+				local hitRight  = cast(hrp.CFrame.RightVector * 1.2)
+
+				local wallHit = hitCenter or hitLeft or hitRight
+
+				if wallHit then
+					-- Ada tembok → SLIDE di dinding (bukan stop total, bukan bounce aneh)
+					local normal = wallHit.Normal
+					-- Hapus komponen velocity yang menembus tembok
+					local vel = currentVel
+					local intoWall = vel:Dot(normal)
+					if intoWall < 0 then
+						vel = vel - normal * intoWall
+					end
+					-- Tetap izinkan gerak sepanjang dinding sesuai arah joystick
+					local slideDir = moveDir - normal * moveDir:Dot(normal)
+					if slideDir.Magnitude > 0.05 then
+						slideDir = slideDir.Unit
+						vel = Vector3.new(slideDir.X * desiredSpeed * 0.85, vel.Y, slideDir.Z * desiredSpeed * 0.85)
+					else
+						vel = Vector3.new(0, vel.Y, 0)
+					end
+					hrp.AssemblyLinearVelocity = vel
 				else
-					-- Tidak ada tembok → gerak maju dengan CFrame
-					local speedMultiplier = 0.9 -- bisa disesuaikan (0.7 \~ 1.1)
-					local increment = moveDir * (targetCustomSpeed * dt * speedMultiplier)
-					hrp.CFrame = hrp.CFrame + increment
+					-- Tidak ada tembok → pakai velocity penuh
+					hrp.AssemblyLinearVelocity = Vector3.new(
+						moveDir.X * desiredSpeed,
+						currentVel.Y,
+						moveDir.Z * desiredSpeed
+					)
+				end
+
+				-- ======================
+				-- KOREKSI JIKA SUDAH SEDIKIT MENEMBUS
+				-- ======================
+				local checkParams = RaycastParams.new()
+				checkParams.FilterDescendantsInstances = {char}
+				checkParams.FilterType = Enum.RaycastFilterType.Exclude
+
+				local insideCheck = workspace:Raycast(hrp.Position, moveDir * 1.1, checkParams)
+				if insideCheck and insideCheck.Distance < 1.3 then
+					-- Dorong keluar sedikit dari tembok
+					hrp.CFrame = hrp.CFrame + insideCheck.Normal * (1.3 - insideCheck.Distance)
 				end
 			end
 		end)
@@ -117,7 +161,7 @@ function SpeedModule.Init(tab, player, RunService)
 		speedBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 40)
 	end
 
-	-- Tombol Aktifkan
+	-- Tombol Aktifkan / Matikan
 	speedBtn.MouseButton1Click:Connect(function()
 		local inputSpeed = tonumber(speedBox.Text)
 
@@ -127,15 +171,14 @@ function SpeedModule.Init(tab, player, RunService)
 			return
 		end
 
-		if isActive and targetCustomSpeed == inputSpeed then
-			-- Klik lagi = matikan
+		if isActive and math.abs(targetCustomSpeed - inputSpeed) < 0.1 then
 			stopSpeed()
 		else
 			startSpeed(inputSpeed)
 		end
 	end)
 
-	-- Tombol Fix / Reset
+	-- Tombol Fix
 	fixBtn.MouseButton1Click:Connect(function()
 		local char = player.Character
 		if not char then return end
@@ -146,11 +189,8 @@ function SpeedModule.Init(tab, player, RunService)
 
 		stopSpeed()
 
-		-- Reset velocity
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
-
-		-- Naikkan sedikit biar tidak nyangkut di tanah/tembok
 		hrp.CFrame = hrp.CFrame + Vector3.new(0, 4, 0)
 
 		speedBox.Text = ""
@@ -162,12 +202,11 @@ function SpeedModule.Init(tab, player, RunService)
 		end)
 	end)
 
-	-- Auto stop saat karakter mati / respawn
+	-- Auto stop saat respawn
 	characterConnection = player.CharacterAdded:Connect(function()
 		stopSpeed()
 	end)
 
-	-- Cleanup jika module di-destroy (opsional tapi bagus)
 	tab.AncestryChanged:Connect(function(_, parent)
 		if not parent then
 			stopSpeed()
