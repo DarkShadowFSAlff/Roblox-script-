@@ -1,26 +1,30 @@
 --!nonstrict
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
 local SpeedModule = {}
 
 local CONFIG = {
 	DEFAULT_WALKSPEED       = 16,
 	MIN_SPEED               = 16,
-	MAX_SPEED               = 40,        -- TURUNKAN! 60+ hampir pasti rubberband
+	MAX_SPEED               = 42,        -- Naik dikit, masih relatif aman
 
-	ACCELERATION            = 0.8,       -- WalkSpeed naik per frame
-	DECELERATION            = 2.0,       -- WalkSpeed turun per frame
+	ACCELERATION            = 0.9,
+	DECELERATION            = 2.2,
 
-	RESET_COOLDOWN          = 0.25,      -- Jeda setelah server reset WalkSpeed
-	VERIFY_INTERVAL         = 1.0,       -- Cek WalkSpeed per 1 detik
+	RESET_COOLDOWN          = 0.18,
+	VERIFY_INTERVAL         = 0.75,
 
-	-- Wall-push via LinearVelocity (BUKAN CFrame)
+	-- Wall Push
 	WALL_PUSH_ENABLED       = true,
-	WALL_CHECK_DISTANCE     = 1.8,
-	WALL_PUSH_FORCE         = 18,        -- MaxForce dorongan
-	WALL_MIN_MOVE_DOT       = 0.7,       -- Hanya push saat maju lurus
+	WALL_CHECK_DISTANCE     = 1.75,
+	WALL_PUSH_FORCE         = 22,
+	WALL_MIN_MOVE_DOT       = 0.65,
 
+	-- Advanced
+	TRY_NETWORK_OWNERSHIP   = true,      -- Coba ambil network ownership
+	PROTECT_WALKSPEED       = true,      -- Lindungi WalkSpeed dari reset server
 	FORCE_THROUGH_GAME_LOCKS = false,
 }
 
@@ -43,7 +47,7 @@ local function buildCharacterFilter(onlyChar)
 	local list = { onlyChar }
 	for _, plr in ipairs(Players:GetPlayers()) do
 		local c = plr.Character
-		if c and c ~= onlyChar then table.insert(list, c) end
+		if c and c \~= onlyChar then table.insert(list, c) end
 	end
 	return list
 end
@@ -67,7 +71,7 @@ function SpeedModule.Init(tab, player, RunService)
 	speedBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 	speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	speedBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
-	speedBox.PlaceholderText = "Angka (Rekomendasi: 28-35)"
+	speedBox.PlaceholderText = "Angka (Rekomendasi: 30-38)"
 	speedBox.Text = ""
 	speedBox.TextSize = 11
 	speedBox.Font = Enum.Font.SourceSans
@@ -100,17 +104,18 @@ function SpeedModule.Init(tab, player, RunService)
 	local verifyThread   = nil
 	local charConn       = nil
 	local treeConn       = nil
+	local walkspeedConn  = nil
 
 	local targetSpeed    = CONFIG.DEFAULT_WALKSPEED
 	local currentSpeed   = CONFIG.DEFAULT_WALKSPEED
 	local lastResetTime  = 0
 	local isActive       = false
+	local hasNetworkOwner = false
 
-	-- Cache arah raycast
+	-- Cache arah raycast (8 arah horizontal)
 	local directions = {}
-	local count = 8
-	for i = 0, count - 1 do
-		local a = (i / count) * math.pi * 2
+	for i = 0, 7 do
+		local a = (i / 8) * math.pi * 2
 		directions[#directions + 1] = Vector3.new(math.cos(a), 0, math.sin(a))
 	end
 
@@ -118,18 +123,14 @@ function SpeedModule.Init(tab, player, RunService)
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.RespectCanCollide = true
 
-	-- LinearVelocity untuk wall-push (bukan CFrame!)
+	-- LinearVelocity untuk wall-push
 	local pushAttachment, pushVelocity
 
 	local function cleanupPushPhysics()
-		if pushVelocity then
-			safeCall(function() pushVelocity:Destroy() end)
-			pushVelocity = nil
-		end
-		if pushAttachment then
-			safeCall(function() pushAttachment:Destroy() end)
-			pushAttachment = nil
-		end
+		if pushVelocity then safeCall(function() pushVelocity:Destroy() end) end
+		if pushAttachment then safeCall(function() pushAttachment:Destroy() end) end
+		pushVelocity = nil
+		pushAttachment = nil
 	end
 
 	local function setupPushPhysics(hrp)
@@ -139,7 +140,7 @@ function SpeedModule.Init(tab, player, RunService)
 
 		pushVelocity = Instance.new("LinearVelocity")
 		pushVelocity.Attachment0 = pushAttachment
-		pushVelocity.MaxForce = 0          -- Mulai 0, aktifkan saat perlu
+		pushVelocity.MaxForce = 0
 		pushVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
 		pushVelocity.PrimaryTangentAxis = Vector3.new(1, 0, 0)
 		pushVelocity.SecondaryTangentAxis = Vector3.new(0, 0, 1)
@@ -147,7 +148,51 @@ function SpeedModule.Init(tab, player, RunService)
 		pushVelocity.Parent = hrp
 	end
 
-	-- ===================== Wall Push (velocity-based) =====================
+	-- ===================== Network Ownership =====================
+	local function tryTakeNetworkOwnership(hrp)
+		if not CONFIG.TRY_NETWORK_OWNERSHIP then return false end
+
+		local success = false
+		safeCall(function()
+			-- Coba set network owner ke local player
+			hrp:SetNetworkOwner(player)
+			success = true
+		end)
+
+		-- Beberapa executor mendukung cara alternatif
+		if not success then
+			safeCall(function()
+				sethiddenproperty(hrp, "NetworkIsSleeping", false)
+				sethiddenproperty(hrp, "NetworkOwnershipRule", Enum.NetworkOwnership.Manual)
+			end)
+		end
+
+		return success
+	end
+
+	-- ===================== Protect WalkSpeed =====================
+	local function protectWalkSpeed(humanoid)
+		if not CONFIG.PROTECT_WALKSPEED then return end
+
+		if walkspeedConn then
+			walkspeedConn:Disconnect()
+			walkspeedConn = nil
+		end
+
+		-- Pantau perubahan WalkSpeed dari server
+		walkspeedConn = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+			if not isActive then return end
+			local now = os.clock()
+			if humanoid.WalkSpeed \~= currentSpeed and now - lastResetTime > CONFIG.RESET_COOLDOWN then
+				lastResetTime = now
+				safeCall(function()
+					humanoid.WalkSpeed = currentSpeed
+				end)
+			end
+		end)
+	end
+
+	-- ===================== Wall Push =====================
 	local function applyWallPush(hrp, humanoid)
 		if not CONFIG.WALL_PUSH_ENABLED or not pushVelocity then return end
 
@@ -157,7 +202,6 @@ function SpeedModule.Init(tab, player, RunService)
 			return
 		end
 
-		-- Hanya push jika benar-benar maju lurus (hindari konflik strafe)
 		local look = hrp.CFrame.LookVector
 		local horizLook = Vector3.new(look.X, 0, look.Z)
 		if horizLook.Magnitude < 0.01 then
@@ -167,7 +211,6 @@ function SpeedModule.Init(tab, player, RunService)
 		horizLook = horizLook.Unit
 
 		if moveDir:Dot(horizLook) < CONFIG.WALL_MIN_MOVE_DOT then
-			-- Sedang strafe / mundur → jangan push
 			pushVelocity.MaxForce = 0
 			return
 		end
@@ -181,7 +224,7 @@ function SpeedModule.Init(tab, player, RunService)
 			local result = Workspace:Raycast(origin, dir * CONFIG.WALL_CHECK_DISTANCE, rayParams)
 			if result then
 				local n = result.Normal
-				if math.abs(n.Y) < 0.7 then
+				if math.abs(n.Y) < 0.72 then -- hanya dinding, bukan lantai/atap
 					local h = Vector3.new(n.X, 0, n.Z)
 					if h.Magnitude > 0.01 then
 						local force = (CONFIG.WALL_CHECK_DISTANCE - result.Distance) / CONFIG.WALL_CHECK_DISTANCE
@@ -191,32 +234,32 @@ function SpeedModule.Init(tab, player, RunService)
 			end
 		end
 
-		if totalPush.Magnitude < 0.05 then
+		if totalPush.Magnitude < 0.04 then
 			pushVelocity.MaxForce = 0
 			return
 		end
 
-		-- Dorong sebagai "tambahan velocity" ke arah normal dinding
 		local pushDir = totalPush.Unit
-		local pushVel = pushDir * (CONFIG.WALL_PUSH_FORCE * totalPush.Magnitude * 0.1)
+		local strength = math.clamp(totalPush.Magnitude, 0.2, 1.4)
+		local pushVel = pushDir * (CONFIG.WALL_PUSH_FORCE * strength * 0.085)
 
 		pushVelocity.PlaneVelocity = Vector2.new(pushVel.X, pushVel.Z)
-		pushVelocity.MaxForce = CONFIG.WALL_PUSH_FORCE * 5
+		pushVelocity.MaxForce = CONFIG.WALL_PUSH_FORCE * 6.5
 	end
 
 	-- ===================== Start / Stop =====================
 	local function stopSpeed()
 		if heartbeatConn then heartbeatConn:Disconnect(); heartbeatConn = nil end
 		if verifyThread then pcall(task.cancel, verifyThread); verifyThread = nil end
-		isActive = false
+		if walkspeedConn then walkspeedConn:Disconnect(); walkspeedConn = nil end
 
+		isActive = false
+		hasNetworkOwner = false
 		cleanupPushPhysics()
 
 		local _, humanoid = getParts(player)
 		if humanoid then
-			safeCall(function()
-				humanoid.WalkSpeed = CONFIG.DEFAULT_WALKSPEED
-			end)
+			safeCall(function() humanoid.WalkSpeed = CONFIG.DEFAULT_WALKSPEED end)
 		end
 
 		safeCall(function()
@@ -230,7 +273,7 @@ function SpeedModule.Init(tab, player, RunService)
 	local function startSpeed(speed)
 		stopSpeed()
 
-		local _, humanoid, hrp = getParts(player)
+		local char, humanoid, hrp = getParts(player)
 		if not humanoid or not hrp then return end
 
 		targetSpeed = math.clamp(speed, CONFIG.MIN_SPEED, CONFIG.MAX_SPEED)
@@ -238,7 +281,11 @@ function SpeedModule.Init(tab, player, RunService)
 		isActive = true
 		lastResetTime = 0
 
+		-- Coba ambil network ownership
+		hasNetworkOwner = tryTakeNetworkOwnership(hrp)
+
 		setupPushPhysics(hrp)
+		protectWalkSpeed(humanoid)
 
 		heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 			local c, h, root = getParts(player)
@@ -246,10 +293,9 @@ function SpeedModule.Init(tab, player, RunService)
 
 			local now = os.clock()
 
-			-- === SMOOTH ACCELERATION ===
-			-- Jangan lompat langsung ke targetSpeed; naik/turun bertahap.
+			-- Smooth acceleration
 			local diff = targetSpeed - currentSpeed
-			if math.abs(diff) > 0.5 then
+			if math.abs(diff) > 0.4 then
 				local step = (diff > 0)
 					and CONFIG.ACCELERATION * (dt * 60)
 					or -CONFIG.DECELERATION * (dt * 60)
@@ -258,34 +304,37 @@ function SpeedModule.Init(tab, player, RunService)
 				currentSpeed = targetSpeed
 			end
 
-			-- === HORMATI RESET SERVER ===
+			-- Hormati lock game (WalkSpeed = 0)
 			local serverSpeed = h.WalkSpeed
-			if serverSpeed ~= currentSpeed then
-				if serverSpeed == 0 and not CONFIG.FORCE_THROUGH_GAME_LOCKS then
-					-- Game mengunci (hiding/cutscene) — hormati
-					currentSpeed = 0
-				else
-					-- Server tampaknya reset → beri jeda sebelum paksa lagi
+			if serverSpeed == 0 and not CONFIG.FORCE_THROUGH_GAME_LOCKS then
+				currentSpeed = 0
+			else
+				if serverSpeed \~= currentSpeed then
 					if now - lastResetTime > CONFIG.RESET_COOLDOWN then
 						lastResetTime = now
 						safeCall(function() h.WalkSpeed = currentSpeed end)
 					end
+				else
+					safeCall(function() h.WalkSpeed = currentSpeed end)
 				end
-			else
-				safeCall(function() h.WalkSpeed = currentSpeed end)
 			end
 
-			-- === WALL PUSH (velocity-based, tidak CFrame) ===
+			-- Wall push
 			safeCall(applyWallPush, root, h)
+
+			-- Kadang-kadang coba jaga network ownership
+			if CONFIG.TRY_NETWORK_OWNERSHIP and not hasNetworkOwner and math.random() < 0.03 then
+				hasNetworkOwner = tryTakeNetworkOwnership(root)
+			end
 		end)
 
-		-- Verifikasi lambat (1 detik) — jangan terlalu sering
+		-- Verifikasi periodik
 		verifyThread = task.spawn(function()
 			while isActive do
 				task.wait(CONFIG.VERIFY_INTERVAL)
 				if not isActive then break end
 				local _, h = getParts(player)
-				if h and h.WalkSpeed ~= 0 and h.WalkSpeed ~= currentSpeed then
+				if h and h.WalkSpeed \~= 0 and math.abs(h.WalkSpeed - currentSpeed) > 0.5 then
 					safeCall(function() h.WalkSpeed = currentSpeed end)
 				end
 			end
@@ -293,7 +342,8 @@ function SpeedModule.Init(tab, player, RunService)
 
 		safeCall(function()
 			if speedBtn.Parent then
-				speedBtn.Text = "Speed Aktif (" .. targetSpeed .. ")"
+				local ownerText = hasNetworkOwner and " [Owner]" or ""
+				speedBtn.Text = "Speed Aktif (" .. targetSpeed .. ")" .. ownerText
 				speedBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 40)
 			end
 		end)
@@ -332,7 +382,7 @@ function SpeedModule.Init(tab, player, RunService)
 			params.RespectCanCollide = true
 
 			local up = Workspace:Raycast(hrp.Position, Vector3.new(0, 8, 0), params)
-			local lift = up and math.max(up.Distance - 0.5, 1) or 4
+			local lift = up and math.max(up.Distance - 0.5, 1.2) or 4
 			local target = hrp.Position + Vector3.new(0, lift, 0)
 			local down = Workspace:Raycast(target, Vector3.new(0, -(lift + 2), 0), params)
 			if down then target = down.Position + Vector3.new(0, 3, 0) end
@@ -356,8 +406,8 @@ function SpeedModule.Init(tab, player, RunService)
 	treeConn = tab.AncestryChanged:Connect(function(_, parent)
 		if not parent then
 			stopSpeed()
-			if charConn then charConn:Disconnect(); charConn = nil end
-			if treeConn then treeConn:Disconnect(); treeConn = nil end
+			if charConn then charConn:Disconnect() end
+			if treeConn then treeConn:Disconnect() end
 		end
 	end)
 
