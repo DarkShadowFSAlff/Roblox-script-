@@ -1,47 +1,32 @@
---!strict
+--!nonstrict
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local SpeedModule = {}
 
--- ============================================================
--- KONFIGURASI (ubah di sini)
--- ============================================================
 local CONFIG = {
-	DEFAULT_WALKSPEED     = 16,
-	MIN_SPEED             = 16,
-	MAX_SPEED             = 150,
+	DEFAULT_WALKSPEED       = 16,
+	MIN_SPEED               = 16,
+	MAX_SPEED               = 40,        -- TURUNKAN! 60+ hampir pasti rubberband
 
-	-- Deteksi dinding
-	WALL_CHECK_DISTANCE   = 2.0,
-	WALL_STRONG_DISTANCE  = 1.3,
+	ACCELERATION            = 0.8,       -- WalkSpeed naik per frame
+	DECELERATION            = 2.0,       -- WalkSpeed turun per frame
 
-	-- Kekuatan dorongan (jauh lebih kecil dari versi awal)
-	WALL_PUSH_NORMAL      = 0.35,
-	WALL_PUSH_STRONG      = 0.70,
-	WALL_PUSH_MULTIPLIER  = 25,   -- sebelumnya 50 (terlalu keras → stutter)
+	RESET_COOLDOWN          = 0.25,      -- Jeda setelah server reset WalkSpeed
+	VERIFY_INTERVAL         = 1.0,       -- Cek WalkSpeed per 1 detik
 
-	-- Filter raycast
-	WALL_RAYCAST_COUNT    = 8,
-	WALL_MIN_VELOCITY     = 3,
-	WALL_MAX_PUSH_MAG     = 1.0,
+	-- Wall-push via LinearVelocity (BUKAN CFrame)
+	WALL_PUSH_ENABLED       = true,
+	WALL_CHECK_DISTANCE     = 1.8,
+	WALL_PUSH_FORCE         = 18,        -- MaxForce dorongan
+	WALL_MIN_MOVE_DOT       = 0.7,       -- Hanya push saat maju lurus
 
-	-- Verifikasi WalkSpeed (anti-override dari sistem lain)
-	WALKSPEED_VERIFY_INTERVAL = 0.3,
-
-	-- Jika true: speed hack menimpa WalkSpeed = 0 dari game (mis. saat hiding)
-	-- Jika false: menghormati game saat game "mengunci" kecepatan ke 0
 	FORCE_THROUGH_GAME_LOCKS = false,
 }
 
--- ============================================================
--- UTIL
--- ============================================================
 local function safeCall(fn, ...)
 	local ok, err = pcall(fn, ...)
-	if not ok then
-		warn("[SpeedModule]", tostring(err))
-	end
+	if not ok then warn("[SpeedModule]", tostring(err)) end
 	return ok
 end
 
@@ -50,8 +35,7 @@ local function getParts(player)
 	if not char then return nil end
 	local humanoid = char:FindFirstChildOfClass("Humanoid")
 	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not humanoid or not hrp then return nil end
-	if humanoid.Health <= 0 then return nil end
+	if not humanoid or not hrp or humanoid.Health <= 0 then return nil end
 	return char, humanoid, hrp
 end
 
@@ -59,25 +43,15 @@ local function buildCharacterFilter(onlyChar)
 	local list = { onlyChar }
 	for _, plr in ipairs(Players:GetPlayers()) do
 		local c = plr.Character
-		if c and c ~= onlyChar then
-			table.insert(list, c)
-		end
+		if c and c ~= onlyChar then table.insert(list, c) end
 	end
 	return list
 end
 
--- ============================================================
--- MODULE
--- ============================================================
 function SpeedModule.Init(tab, player, RunService)
-	if not RunService:IsClient() then
-		warn("[SpeedModule] Hanya bisa dijalankan di client")
-		return
-	end
+	if not RunService:IsClient() then return end
 
-	-- ===============================
-	-- UI
-	-- ===============================
+	-- ===================== UI =====================
 	local speedLabel = Instance.new("TextLabel")
 	speedLabel.Size = UDim2.new(0.9, 0, 0, 20)
 	speedLabel.BackgroundTransparency = 1
@@ -93,7 +67,7 @@ function SpeedModule.Init(tab, player, RunService)
 	speedBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 	speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	speedBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
-	speedBox.PlaceholderText = "Masukkan Angka (Rekomendasi: 45-65)"
+	speedBox.PlaceholderText = "Angka (Rekomendasi: 28-35)"
 	speedBox.Text = ""
 	speedBox.TextSize = 11
 	speedBox.Font = Enum.Font.SourceSans
@@ -121,116 +95,128 @@ function SpeedModule.Init(tab, player, RunService)
 	fixBtn.LayoutOrder = 4
 	fixBtn.Parent = tab
 
-	-- ===============================
-	-- STATE
-	-- ===============================
+	-- ===================== State =====================
 	local heartbeatConn  = nil
 	local verifyThread   = nil
 	local charConn       = nil
 	local treeConn       = nil
 
-	local targetCustomSpeed = CONFIG.DEFAULT_WALKSPEED
-	local originalWalkSpeed = CONFIG.DEFAULT_WALKSPEED
-	local hasCapturedOriginal = false
-	local isActive = false
+	local targetSpeed    = CONFIG.DEFAULT_WALKSPEED
+	local currentSpeed   = CONFIG.DEFAULT_WALKSPEED
+	local lastResetTime  = 0
+	local isActive       = false
 
-	-- Cache arah raycast (dihitung sekali)
-	local directions = table.create(CONFIG.WALL_RAYCAST_COUNT)
-	for i = 0, CONFIG.WALL_RAYCAST_COUNT - 1 do
-		local angle = (i / CONFIG.WALL_RAYCAST_COUNT) * math.pi * 2
-		directions[i + 1] = Vector3.new(math.cos(angle), 0, math.sin(angle))
+	-- Cache arah raycast
+	local directions = {}
+	local count = 8
+	for i = 0, count - 1 do
+		local a = (i / count) * math.pi * 2
+		directions[#directions + 1] = Vector3.new(math.cos(a), 0, math.sin(a))
 	end
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.RespectCanCollide = true
 
-	-- ===============================
-	-- CORE: push dinding
-	-- ===============================
-	local function computeWallPush(hrp, char)
-		rayParams.FilterDescendantsInstances = buildCharacterFilter(char)
+	-- LinearVelocity untuk wall-push (bukan CFrame!)
+	local pushAttachment, pushVelocity
+
+	local function cleanupPushPhysics()
+		if pushVelocity then
+			safeCall(function() pushVelocity:Destroy() end)
+			pushVelocity = nil
+		end
+		if pushAttachment then
+			safeCall(function() pushAttachment:Destroy() end)
+			pushAttachment = nil
+		end
+	end
+
+	local function setupPushPhysics(hrp)
+		cleanupPushPhysics()
+		pushAttachment = Instance.new("Attachment")
+		pushAttachment.Parent = hrp
+
+		pushVelocity = Instance.new("LinearVelocity")
+		pushVelocity.Attachment0 = pushAttachment
+		pushVelocity.MaxForce = 0          -- Mulai 0, aktifkan saat perlu
+		pushVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+		pushVelocity.PrimaryTangentAxis = Vector3.new(1, 0, 0)
+		pushVelocity.SecondaryTangentAxis = Vector3.new(0, 0, 1)
+		pushVelocity.PlaneVelocity = Vector2.new(0, 0)
+		pushVelocity.Parent = hrp
+	end
+
+	-- ===================== Wall Push (velocity-based) =====================
+	local function applyWallPush(hrp, humanoid)
+		if not CONFIG.WALL_PUSH_ENABLED or not pushVelocity then return end
+
+		local moveDir = humanoid.MoveDirection
+		if moveDir.Magnitude < 0.1 then
+			pushVelocity.MaxForce = 0
+			return
+		end
+
+		-- Hanya push jika benar-benar maju lurus (hindari konflik strafe)
+		local look = hrp.CFrame.LookVector
+		local horizLook = Vector3.new(look.X, 0, look.Z)
+		if horizLook.Magnitude < 0.01 then
+			pushVelocity.MaxForce = 0
+			return
+		end
+		horizLook = horizLook.Unit
+
+		if moveDir:Dot(horizLook) < CONFIG.WALL_MIN_MOVE_DOT then
+			-- Sedang strafe / mundur → jangan push
+			pushVelocity.MaxForce = 0
+			return
+		end
+
+		rayParams.FilterDescendantsInstances = buildCharacterFilter(player.Character)
 
 		local totalPush = Vector3.zero
-		local closestDist = CONFIG.WALL_CHECK_DISTANCE
 		local origin = hrp.Position
 
 		for _, dir in ipairs(directions) do
 			local result = Workspace:Raycast(origin, dir * CONFIG.WALL_CHECK_DISTANCE, rayParams)
 			if result then
 				local n = result.Normal
-				-- Abaikan lantai / plafon (normal hampir vertikal)
 				if math.abs(n.Y) < 0.7 then
-					local horiz = Vector3.new(n.X, 0, n.Z)
-					local mag = horiz.Magnitude
-					if mag > 0.01 then
-						horiz = horiz / mag
-						local dist = result.Distance
-						if dist < closestDist then
-							closestDist = dist
-						end
-						local force = (CONFIG.WALL_CHECK_DISTANCE - dist) / CONFIG.WALL_CHECK_DISTANCE
-						totalPush = totalPush + horiz * force
+					local h = Vector3.new(n.X, 0, n.Z)
+					if h.Magnitude > 0.01 then
+						local force = (CONFIG.WALL_CHECK_DISTANCE - result.Distance) / CONFIG.WALL_CHECK_DISTANCE
+						totalPush = totalPush + h.Unit * force
 					end
 				end
 			end
 		end
 
-		return totalPush, closestDist
-	end
-
-	local function applyAntiBounce(hrp, humanoid, dt)
-		local vel = hrp.AssemblyLinearVelocity
-		local horizVel = Vector3.new(vel.X, 0, vel.Z)
-
-		-- Hanya aktif saat bergerak cukup cepat (mencegah dorongan saat idle)
-		if horizVel.Magnitude < CONFIG.WALL_MIN_VELOCITY then
+		if totalPush.Magnitude < 0.05 then
+			pushVelocity.MaxForce = 0
 			return
 		end
 
-		local pushDir, closestDist = computeWallPush(hrp, player.Character)
-		local mag = pushDir.Magnitude
-		if mag < 0.01 then return end  -- PENTING: hindari .Unit pada vektor ~0
+		-- Dorong sebagai "tambahan velocity" ke arah normal dinding
+		local pushDir = totalPush.Unit
+		local pushVel = pushDir * (CONFIG.WALL_PUSH_FORCE * totalPush.Magnitude * 0.1)
 
-		if mag > CONFIG.WALL_MAX_PUSH_MAG then
-			pushDir = pushDir / mag * CONFIG.WALL_MAX_PUSH_MAG
-		end
-		pushDir = pushDir.Unit
-
-		local isStrong = closestDist < CONFIG.WALL_STRONG_DISTANCE
-		local pushPower = isStrong and CONFIG.WALL_PUSH_STRONG or CONFIG.WALL_PUSH_NORMAL
-
-		-- Jika sedang bergerak searah dorongan, kurangi dorongan samping
-		-- (biar lebih mudah lewat pintu)
-		local moveDir = humanoid.MoveDirection
-		if moveDir.Magnitude > 0.1 then
-			local alignment = math.abs(pushDir:Dot(moveDir))
-			pushPower = pushPower * (1 - alignment * 0.5)
-		end
-
-		hrp.CFrame = hrp.CFrame + pushDir * (pushPower * dt * CONFIG.WALL_PUSH_MULTIPLIER)
+		pushVelocity.PlaneVelocity = Vector2.new(pushVel.X, pushVel.Z)
+		pushVelocity.MaxForce = CONFIG.WALL_PUSH_FORCE * 5
 	end
 
-	-- ===============================
-	-- CORE: start/stop speed
-	-- ===============================
+	-- ===================== Start / Stop =====================
 	local function stopSpeed()
-		if heartbeatConn then
-			heartbeatConn:Disconnect()
-			heartbeatConn = nil
-		end
-		if verifyThread then
-			pcall(task.cancel, verifyThread)
-			verifyThread = nil
-		end
+		if heartbeatConn then heartbeatConn:Disconnect(); heartbeatConn = nil end
+		if verifyThread then pcall(task.cancel, verifyThread); verifyThread = nil end
 		isActive = false
 
+		cleanupPushPhysics()
+
 		local _, humanoid = getParts(player)
-		if humanoid and hasCapturedOriginal then
+		if humanoid then
 			safeCall(function()
-				humanoid.WalkSpeed = originalWalkSpeed
+				humanoid.WalkSpeed = CONFIG.DEFAULT_WALKSPEED
 			end)
-			hasCapturedOriginal = false
 		end
 
 		safeCall(function()
@@ -244,152 +230,138 @@ function SpeedModule.Init(tab, player, RunService)
 	local function startSpeed(speed)
 		stopSpeed()
 
-		local _, humanoid = getParts(player)
-		if not humanoid then return end
+		local _, humanoid, hrp = getParts(player)
+		if not humanoid or not hrp then return end
 
-		-- Simpan WalkSpeed asli HANYA sekali per sesi aktif
-		originalWalkSpeed = humanoid.WalkSpeed
-		hasCapturedOriginal = true
-
-		targetCustomSpeed = math.clamp(speed, CONFIG.MIN_SPEED, CONFIG.MAX_SPEED)
+		targetSpeed = math.clamp(speed, CONFIG.MIN_SPEED, CONFIG.MAX_SPEED)
+		currentSpeed = humanoid.WalkSpeed
 		isActive = true
+		lastResetTime = 0
 
-		safeCall(function()
-			humanoid.WalkSpeed = targetCustomSpeed
-		end)
+		setupPushPhysics(hrp)
 
-		-- Heartbeat: set WalkSpeed + anti-bounce
 		heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-			local c, h, hrp = getParts(player)
-			if not c or not h or not hrp then return end
+			local c, h, root = getParts(player)
+			if not c or not h or not root then return end
 
-			-- Deteksi jika game mengubah WalkSpeed dari luar
-			if h.WalkSpeed ~= targetCustomSpeed then
-				if h.WalkSpeed == 0 and not CONFIG.FORCE_THROUGH_GAME_LOCKS then
-					-- Game mengunci (hiding/cutscene) → hormati, jangan paksa
-				else
-					h.WalkSpeed = targetCustomSpeed
-				end
+			local now = os.clock()
+
+			-- === SMOOTH ACCELERATION ===
+			-- Jangan lompat langsung ke targetSpeed; naik/turun bertahap.
+			local diff = targetSpeed - currentSpeed
+			if math.abs(diff) > 0.5 then
+				local step = (diff > 0)
+					and CONFIG.ACCELERATION * (dt * 60)
+					or -CONFIG.DECELERATION * (dt * 60)
+				currentSpeed = currentSpeed + math.clamp(step, -math.abs(diff), math.abs(diff))
+			else
+				currentSpeed = targetSpeed
 			end
 
-			safeCall(applyAntiBounce, hrp, h, dt)
+			-- === HORMATI RESET SERVER ===
+			local serverSpeed = h.WalkSpeed
+			if serverSpeed ~= currentSpeed then
+				if serverSpeed == 0 and not CONFIG.FORCE_THROUGH_GAME_LOCKS then
+					-- Game mengunci (hiding/cutscene) — hormati
+					currentSpeed = 0
+				else
+					-- Server tampaknya reset → beri jeda sebelum paksa lagi
+					if now - lastResetTime > CONFIG.RESET_COOLDOWN then
+						lastResetTime = now
+						safeCall(function() h.WalkSpeed = currentSpeed end)
+					end
+				end
+			else
+				safeCall(function() h.WalkSpeed = currentSpeed end)
+			end
+
+			-- === WALL PUSH (velocity-based, tidak CFrame) ===
+			safeCall(applyWallPush, root, h)
 		end)
 
-		-- Verifikasi berkala (jika ada sistem lain yang mengubah tanpa lewat Heartbeat)
+		-- Verifikasi lambat (1 detik) — jangan terlalu sering
 		verifyThread = task.spawn(function()
 			while isActive do
-				task.wait(CONFIG.WALKSPEED_VERIFY_INTERVAL)
+				task.wait(CONFIG.VERIFY_INTERVAL)
 				if not isActive then break end
 				local _, h = getParts(player)
-				if h and h.WalkSpeed ~= targetCustomSpeed and h.WalkSpeed ~= 0 then
-					safeCall(function()
-						h.WalkSpeed = targetCustomSpeed
-					end)
+				if h and h.WalkSpeed ~= 0 and h.WalkSpeed ~= currentSpeed then
+					safeCall(function() h.WalkSpeed = currentSpeed end)
 				end
 			end
 		end)
 
 		safeCall(function()
 			if speedBtn.Parent then
-				speedBtn.Text = "Speed Aktif (" .. targetCustomSpeed .. ")"
+				speedBtn.Text = "Speed Aktif (" .. targetSpeed .. ")"
 				speedBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 40)
 			end
 		end)
 	end
 
-	-- ===============================
-	-- UI EVENTS
-	-- ===============================
+	-- ===================== UI Events =====================
 	speedBtn.MouseButton1Click:Connect(function()
-		local inputSpeed = tonumber(speedBox.Text)
-
-		if not inputSpeed or inputSpeed <= 0 then
-			speedBox.PlaceholderText = "Masukkan angka yang valid!"
+		local v = tonumber(speedBox.Text)
+		if not v or v <= 0 then
+			speedBox.PlaceholderText = "Angka tidak valid!"
 			return
 		end
-		if inputSpeed < CONFIG.MIN_SPEED then
-			speedBox.PlaceholderText = "Minimal " .. CONFIG.MIN_SPEED
+		if v < CONFIG.MIN_SPEED or v > CONFIG.MAX_SPEED then
+			speedBox.PlaceholderText = "Range " .. CONFIG.MIN_SPEED .. "-" .. CONFIG.MAX_SPEED
 			return
 		end
-		if inputSpeed > CONFIG.MAX_SPEED then
-			speedBox.PlaceholderText = "Maksimal " .. CONFIG.MAX_SPEED
-			return
-		end
-
-		if isActive and math.abs(targetCustomSpeed - inputSpeed) < 0.1 then
+		if isActive and math.abs(targetSpeed - v) < 0.1 then
 			stopSpeed()
 		else
-			startSpeed(inputSpeed)
+			startSpeed(v)
 		end
 	end)
 
 	fixBtn.MouseButton1Click:Connect(function()
 		local char, _, hrp = getParts(player)
 		if not hrp then return end
-
 		stopSpeed()
 
 		safeCall(function()
 			hrp.AssemblyLinearVelocity = Vector3.zero
 			hrp.AssemblyAngularVelocity = Vector3.zero
 
-			local checkParams = RaycastParams.new()
-			checkParams.FilterType = Enum.RaycastFilterType.Exclude
-			checkParams.FilterDescendantsInstances = { char }
-			checkParams.RespectCanCollide = true
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = { char }
+			params.RespectCanCollide = true
 
-			-- Cari langit-langit di atas (agar tidak tembus)
-			local upRes = Workspace:Raycast(hrp.Position, Vector3.new(0, 8, 0), checkParams)
-			local lift = upRes and math.max(upRes.Distance - 0.5, 1) or 4
-
-			-- Cari lantai di bawah posisi tujuan
-			local targetPos = hrp.Position + Vector3.new(0, lift, 0)
-			local downRes = Workspace:Raycast(targetPos, Vector3.new(0, -(lift + 2), 0), checkParams)
-			if downRes then
-				targetPos = downRes.Position + Vector3.new(0, 3, 0)
-			end
-
-			-- Offset posisi, pertahankan rotasi
-			hrp.CFrame = hrp.CFrame + (targetPos - hrp.Position)
+			local up = Workspace:Raycast(hrp.Position, Vector3.new(0, 8, 0), params)
+			local lift = up and math.max(up.Distance - 0.5, 1) or 4
+			local target = hrp.Position + Vector3.new(0, lift, 0)
+			local down = Workspace:Raycast(target, Vector3.new(0, -(lift + 2), 0), params)
+			if down then target = down.Position + Vector3.new(0, 3, 0) end
+			hrp.CFrame = hrp.CFrame + (target - hrp.Position)
 
 			speedBox.Text = ""
 			if fixBtn.Parent then
 				fixBtn.Text = "Berhasil Direset!"
 				task.delay(1.2, function()
-					if fixBtn.Parent then
-						fixBtn.Text = "Fix Posisi / Reset Nyangkut"
-					end
+					if fixBtn.Parent then fixBtn.Text = "Fix Posisi / Reset Nyangkut" end
 				end)
 			end
 		end)
 	end)
 
-	-- ===============================
-	-- CLEANUP
-	-- ===============================
-	local function cleanup()
-		stopSpeed()
-		if charConn then
-			charConn:Disconnect()
-			charConn = nil
-		end
-		if treeConn then
-			treeConn:Disconnect()
-			treeConn = nil
-		end
-	end
-
+	-- ===================== Cleanup =====================
 	charConn = player.CharacterAdded:Connect(function()
 		stopSpeed()
 	end)
 
 	treeConn = tab.AncestryChanged:Connect(function(_, parent)
 		if not parent then
-			cleanup()
+			stopSpeed()
+			if charConn then charConn:Disconnect(); charConn = nil end
+			if treeConn then treeConn:Disconnect(); treeConn = nil end
 		end
 	end)
 
-	return { cleanup = cleanup, stop = stopSpeed }
+	return { stop = stopSpeed }
 end
 
 return SpeedModule
