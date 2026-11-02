@@ -50,8 +50,8 @@ function SpeedModule.Init(tab, player, RunService)
 	local isActive = false
 
 	-- Pengaturan (bisa kamu sesuaikan)
-	local CHECK_DISTANCE = 2.4      -- Seberapa jauh deteksi dinding
-	local PUSH_STRENGTH = 2.1       -- Kekuatan dorong keluar
+	local CHECK_DISTANCE = 2.7      -- Seberapa jauh deteksi dinding
+	local PUSH_STRENGTH = 1.8       -- Kekuatan dorong keluar
 	local MAX_SPEED = 90            -- Di atas ini kurang stabil di map ini
 
 	local function stopSpeed()
