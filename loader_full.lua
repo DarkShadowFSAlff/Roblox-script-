@@ -1,6 +1,3 @@
--- Ganti URL di bawah dengan Link Raw GitHub repository Anda yang sebenarnya
-local baseURL = "https://raw.githubusercontent.com/DarkShadowFSAlff/Roblox-script-/main/"
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
