@@ -7,7 +7,7 @@ function SpeedModule.Init(tab, player, RunService)
     speedLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
     speedLabel.TextSize = 11
     speedLabel.Font = Enum.Font.SourceSansBold
-    speedLabel.Text = "--- Kustom Kecepatan & Anti-Noclip ---"
+    speedLabel.Text = "--- Pengaturan Kecepatan & Anti-Glitch ---"
     speedLabel.LayoutOrder = 1
     speedLabel.Parent = tab
 
@@ -16,7 +16,7 @@ function SpeedModule.Init(tab, player, RunService)
     speedBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
     speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
     speedBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
-    speedBox.PlaceholderText = "Masukkan Angka (Contoh: 50 / 80)"
+    speedBox.PlaceholderText = "Masukkan Angka (Contoh: 50 / 500)"
     speedBox.Text = ""
     speedBox.TextSize = 11
     speedBox.Font = Enum.Font.SourceSans
@@ -29,18 +29,17 @@ function SpeedModule.Init(tab, player, RunService)
     speedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     speedBtn.TextSize = 11
     speedBtn.Font = Enum.Font.SourceSansBold
-    speedBtn.Text = "🚀 Aktifkan Speed Kustom"
+    speedBtn.Text = "🚀 Aktifkan Speed Stabil"
     speedBtn.LayoutOrder = 3
     speedBtn.Parent = tab
 
-    -- Tombol Solusi Fix Noclip / Unstuck Darurat
     local fixBtn = Instance.new("TextButton")
     fixBtn.Size = UDim2.new(0.9, 0, 0, 30)
     fixBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
     fixBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     fixBtn.TextSize = 11
     fixBtn.Font = Enum.Font.SourceSansBold
-    fixBtn.Text = "🛠️ Fix Diri / Unstuck (Anti-Noclip)"
+    fixBtn.Text = "🛠️ Fix Posisi / Reset Nyangkut"
     fixBtn.LayoutOrder = 4
     fixBtn.Parent = tab
 
@@ -55,49 +54,65 @@ function SpeedModule.Init(tab, player, RunService)
                 activeSpeedConnection:Disconnect()
             end
             
-            activeSpeedConnection = RunService.RenderStepped:Connect(function()
+            -- Menggunakan pendekatan yang lebih halus agar tidak mental-mentul
+            activeSpeedConnection = RunService.RenderStepped:Connect(function(dt)
                 local char = player.Character
                 if char then
                     local humanoid = char:FindFirstChildOfClass("Humanoid")
-                    if humanoid then
-                        humanoid.WalkSpeed = targetCustomSpeed
-                    end
                     local hrp = char:FindFirstChild("HumanoidRootPart")
-                    -- Batasi dorongan vektor agar tidak terlempar menembus tembok (noclip)
-                    if hrp and humanoid.MoveDirection.Magnitude > 0 then
-                        if targetCustomSpeed > 100 then
-                            -- Pengaman ekstra untuk kecepatan sangat tinggi agar tidak tembus dinding
-                            hrp.CFrame = hrp.CFrame + (humanoid.MoveDirection * math.min(targetCustomSpeed / 40, 2))
+                    
+                    if humanoid and hrp then
+                        humanoid.WalkSpeed = math.min(targetCustomSpeed, 150) -- Batasi WalkSpeed asli agar kolisi game tidak rusak
+                        
+                        -- Jika kecepatan di atas 150, gunakan dorongan CFrame terkontrol dengan Raycast sederhana
+                        if targetCustomSpeed > 150 and humanoid.MoveDirection.Magnitude > 0 then
+                            local moveDir = humanoid.MoveDirection
+                            local raycastParams = RaycastParams.new()
+                            raycastParams.FilterDescendantsInstances = {char}
+                            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                            
+                            -- Cek apakah ada tembok di depan sebelum melangkah
+                            local raycastResult = workspace:Raycast(hrp.Position, moveDir * 3, raycastParams)
+                            
+                            if not raycastResult then
+                                local increment = moveDir * (targetCustomSpeed * dt * 0.7)
+                                hrp.CFrame = hrp.CFrame + increment
+                            end
                         end
                     end
                 end
             end)
             
-            speedBtn.Text = "🚀 Speed Aktif (" .. targetCustomSpeed .. ")"
+            speedBtn.Text = "🚀 Speed Stabil Aktif (" .. targetCustomSpeed .. ")"
             speedBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 40)
         end
     end)
 
-    -- Logika Tombol Fix Darurat Saat Nyangkut / Noclip
     fixBtn.MouseButton1Click:Connect(function()
         local char = player.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
             local hrp = char.HumanoidRootPart
             local humanoid = char:FindFirstChildOfClass("Humanoid")
             
-            -- Reset kecepatan normal sementara dan angkat sedikit ke atas agar keluar dari lantai/tembok
             if humanoid then
                 humanoid.WalkSpeed = 16
             end
+            if activeSpeedConnection then
+                activeSpeedConnection:Disconnect()
+                activeSpeedConnection = nil
+            end
             
-            -- Geser sedikit ke atas dan hentikan momentum fizikal agar tidak jatuh ke void
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            hrp.CFrame = hrp.CFrame + Vector3.new(0, 4, 0)
+            hrp.CFrame = hrp.CFrame + Vector3.new(0, 3, 0)
+            
+            speedBtn.Text = "🚀 Aktifkan Speed Stabil"
+            speedBtn.BackgroundColor3 = Color3.fromRGB(130, 0, 180)
+            speedBox.Text = ""
             
             fixBtn.Text = "🛠️ Berhasil Direset!"
             task.wait(1)
-            fixBtn.Text = "🛠️ Fix Diri / Unstuck (Anti-Noclip)"
+            fixBtn.Text = "🛠️ Fix Posisi / Reset Nyangkut"
         end
     end)
 end
