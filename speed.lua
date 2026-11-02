@@ -16,7 +16,7 @@ function SpeedModule.Init(tab, player, RunService)
 	speedBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 	speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	speedBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
-	speedBox.PlaceholderText = "Masukkan Angka (Rekomendasi: 50-80)"
+	speedBox.PlaceholderText = "Masukkan Angka (Rekomendasi: 45-65)"
 	speedBox.Text = ""
 	speedBox.TextSize = 11
 	speedBox.Font = Enum.Font.SourceSans
@@ -49,10 +49,13 @@ function SpeedModule.Init(tab, player, RunService)
 	local targetCustomSpeed = 16
 	local isActive = false
 
-	-- Pengaturan (bisa kamu sesuaikan)
-	local CHECK_DISTANCE = 2.1      -- Seberapa jauh deteksi dinding
-	local PUSH_STRENGTH = 1.1       -- Kekuatan dorong keluar
-	local MAX_SPEED = 90            -- Di atas ini kurang stabil di map ini
+	-- ======================
+	-- PENGATURAN (bisa diubah)
+	-- ======================
+	local CHECK_DISTANCE = 2.35       -- Jarak deteksi dinding
+	local NORMAL_PUSH = 1.35          -- Dorongan biasa
+	local STRONG_PUSH = 2.4           -- Dorongan saat hampir nembus
+	local MAX_SPEED = 75
 
 	local function stopSpeed()
 		if activeSpeedConnection then
@@ -87,17 +90,18 @@ function SpeedModule.Init(tab, player, RunService)
 			local hrp = char:FindFirstChild("HumanoidRootPart")
 			if not humanoid or not hrp or humanoid.Health <= 0 then return end
 
-			-- Set WalkSpeed (cara paling stabil)
+			-- Set kecepatan
 			humanoid.WalkSpeed = targetCustomSpeed
 
-			-- ======================
-			-- WALL REPEL (inti anti-bounce)
-			-- ======================
+			-- Arah gerak pemain
+			local moveDir = humanoid.MoveDirection
+			local isMoving = moveDir.Magnitude > 0.1
+
 			local params = RaycastParams.new()
 			params.FilterDescendantsInstances = {char}
 			params.FilterType = Enum.RaycastFilterType.Exclude
-			params.IgnoreWater = true
 
+			-- Hanya cek arah horizontal (hindari masalah saat nunduk)
 			local directions = {
 				Vector3.new(1, 0, 0),
 				Vector3.new(-1, 0, 0),
@@ -110,24 +114,37 @@ function SpeedModule.Init(tab, player, RunService)
 			}
 
 			local totalPush = Vector3.zero
-			local hitCount = 0
+			local closestDist = CHECK_DISTANCE
 
 			for _, dir in ipairs(directions) do
 				local result = workspace:Raycast(hrp.Position, dir * CHECK_DISTANCE, params)
 				if result then
 					local dist = result.Distance
-					if dist < CHECK_DISTANCE then
-						local force = (CHECK_DISTANCE - dist) / CHECK_DISTANCE
-						totalPush = totalPush + (result.Normal * force)
-						hitCount += 1
+					if dist < closestDist then
+						closestDist = dist
 					end
+
+					-- Hanya dorong horizontal
+					local normal = Vector3.new(result.Normal.X, 0, result.Normal.Z).Unit
+					local force = (CHECK_DISTANCE - dist) / CHECK_DISTANCE
+					totalPush = totalPush + (normal * force)
 				end
 			end
 
-			if hitCount > 0 then
-				totalPush = totalPush.Unit * PUSH_STRENGTH
-				-- Dorong keluar secara halus
-				hrp.CFrame = hrp.CFrame + totalPush * dt * 55
+			if totalPush.Magnitude > 0 then
+				totalPush = totalPush.Unit
+
+				-- Kalau sangat dekat (hampir nembus) → dorong lebih kuat
+				local pushPower = (closestDist < 1.35) and STRONG_PUSH or NORMAL_PUSH
+
+				-- Kalau sedang jalan maju, kurangi dorongan samping supaya lebih gampang lewat pintu
+				if isMoving then
+					local forward = moveDir
+					local sideFactor = 1 - math.abs(totalPush:Dot(forward)) * 0.55
+					pushPower = pushPower * math.clamp(sideFactor, 0.45, 1)
+				end
+
+				hrp.CFrame = hrp.CFrame + totalPush * pushPower * dt * 50
 			end
 		end)
 
@@ -163,7 +180,7 @@ function SpeedModule.Init(tab, player, RunService)
 
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
-		hrp.CFrame = hrp.CFrame + Vector3.new(0, 5, 0)
+		hrp.CFrame = hrp.CFrame + Vector3.new(0, 4, 0)
 
 		speedBox.Text = ""
 		fixBtn.Text = "Berhasil Direset!"
