@@ -7,7 +7,6 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local pgui = player:WaitForChild("PlayerGui")
 
--- Hapus UI lama jika ada
 if pgui:FindFirstChild("CustomHubUI") then
     pgui.CustomHubUI:Destroy()
 end
@@ -36,9 +35,8 @@ mainStroke.Color = Color3.fromRGB(60, 60, 70)
 mainStroke.Thickness = 1.5
 mainStroke.Parent = mainFrame
 
--- Top Bar (Header)
+-- Top Bar
 local topBar = Instance.new("Frame")
-topBar.Name = "TopBar"
 topBar.Size = UDim2.new(1, 0, 0, 30)
 topBar.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
 topBar.BorderSizePixel = 0
@@ -59,7 +57,7 @@ titleLabel.Font = Enum.Font.SourceSansBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = topBar
 
--- Tombol Control Atas (Compact & Close)
+-- Tombol Kontrol Atas (Minimize Tab & Minimize Menu Penuh)
 local btnHolder = Instance.new("Frame")
 btnHolder.Size = UDim2.new(0, 65, 1, 0)
 btnHolder.Position = UDim2.new(1, -70, 0, 0)
@@ -73,33 +71,35 @@ layoutBtns.VerticalAlignment = Enum.VerticalAlignment.Center
 layoutBtns.Padding = UDim.new(0, 4)
 layoutBtns.Parent = btnHolder
 
-local compactBtn = Instance.new("TextButton")
-compactBtn.Size = UDim2.new(0, 22, 0, 22)
-compactBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
-compactBtn.Text = "➖"
-compactBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-compactBtn.TextSize = 10
-compactBtn.Font = Enum.Font.SourceSansBold
-compactBtn.Parent = btnHolder
+-- Tombol Minimize Tab (Menyembunyikan bar tab atas, menyisakan fungsi tab aktif saja)
+local minimizeTabBtn = Instance.new("TextButton")
+minimizeTabBtn.Size = UDim2.new(0, 22, 0, 22)
+minimizeTabBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+minimizeTabBtn.Text = "➖"
+minimizeTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeTabBtn.TextSize = 10
+minimizeTabBtn.Font = Enum.Font.SourceSansBold
+minimizeTabBtn.Parent = btnHolder
 
-local compactCorner = Instance.new("UICorner")
-compactCorner.CornerRadius = UDim.new(0, 6)
-compactCorner.Parent = compactBtn
+local mTabCorner = Instance.new("UICorner")
+mTabCorner.CornerRadius = UDim.new(0, 6)
+mTabCorner.Parent = minimizeTabBtn
 
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 22, 0, 22)
-closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-closeBtn.Text = "❌"
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.TextSize = 9
-closeBtn.Font = Enum.Font.SourceSansBold
-closeBtn.Parent = btnHolder
+-- Tombol Minimize Penuh (Menjadi bentuk icon kotak melayang ala Delta)
+local minimizeFullBtn = Instance.new("TextButton")
+minimizeFullBtn.Size = UDim2.new(0, 22, 0, 22)
+minimizeFullBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+minimizeFullBtn.Text = "❌"
+minimizeFullBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeFullBtn.TextSize = 9
+minimizeFullBtn.Font = Enum.Font.SourceSansBold
+minimizeFullBtn.Parent = btnHolder
 
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 6)
-closeCorner.Parent = closeBtn
+local mFullCorner = Instance.new("UICorner")
+mFullCorner.CornerRadius = UDim.new(0, 6)
+mFullCorner.Parent = minimizeFullBtn
 
--- Tab Navigation Bar
+-- Tab Bar
 local tabBar = Instance.new("Frame")
 tabBar.Name = "TabBar"
 tabBar.Size = UDim2.new(1, -12, 0, 26)
@@ -113,7 +113,7 @@ tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 tabLayout.Padding = UDim.new(0, 4)
 tabLayout.Parent = tabBar
 
--- Container Konten Tab
+-- Container Konten Tab (Posisinya dinamis menyesuaikan minimize tab)
 local container = Instance.new("Frame")
 container.Name = "Container"
 container.Size = UDim2.new(1, -12, 1, -68)
@@ -121,7 +121,7 @@ container.Position = UDim2.new(0, 6, 0, 64)
 container.BackgroundTransparency = 1
 container.Parent = mainFrame
 
--- Tombol Floating Widget (Minimize Semua Menu Jadi Kotak Kecil)
+-- Floating Icon (Bentuk kotak saat menu di-minimize penuh)
 local floatIcon = Instance.new("TextButton")
 floatIcon.Name = "FloatingIcon"
 floatIcon.Size = UDim2.new(0, 42, 0, 42)
@@ -143,7 +143,7 @@ floatStroke.Color = Color3.fromRGB(0, 170, 255)
 floatStroke.Thickness = 2
 floatStroke.Parent = floatIcon
 
--- LOGIKA SMOOTH DRAGGING (Bisa Digeser Dari Seluruh Sisi/Bintang Sisi Frame)
+-- Smooth Dragging untuk Seluruh Sisi Frame
 local function makeDraggable(frame)
     local dragging, dragInput, dragStart, startPos
 
@@ -158,11 +158,8 @@ local function makeDraggable(frame)
             dragging = true
             dragStart = input.Position
             startPos = frame.Position
-
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
@@ -174,16 +171,14 @@ local function makeDraggable(frame)
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            update(input)
-        end
+        if input == dragInput and dragging then update(input) end
     end)
 end
 
 makeDraggable(mainFrame)
 makeDraggable(floatIcon)
 
--- TAB MANAGEMENT & PENGATURAN MODUL
+-- Tab Management
 local tabs = {}
 local tabButtons = {}
 
@@ -233,25 +228,28 @@ local perfTab = createTab("⚡ Perf", 2)
 local spdTab = createTab("🚀 Spd", 3)
 local gameTab = createTab("🎮 Game", 4)
 
--- Aktifkan Tab Pertama Default
 tabs["📍 Wp"].Visible = true
 tabButtons["📍 Wp"].BackgroundColor3 = Color3.fromRGB(0, 120, 215)
 
--- LOGIKA MINIMIZE (COMPACT MODE vs FLOATING ICON)
-local isCompact = false
+-- LOGIKA MINIMIZE TAB (Menyembunyikan pilihan tab atas, menyisakan fungsi tab aktif saja dengan smooth)
+local isTabMinimized = false
 
-compactBtn.MouseButton1Click:Connect(function()
-    isCompact = not isCompact
+minimizeTabBtn.MouseButton1Click:Connect(function()
+    isTabMinimized = not isTabMinimized
     
-    local targetSize = isCompact and UDim2.new(0, 240, 0, 62) or UDim2.new(0, 240, 0, 210)
+    local targetSize = isTabMinimized and UDim2.new(0, 240, 0, 150) or UDim2.new(0, 240, 0, 210)
+    local targetContainerSize = isTabMinimized and UDim2.new(1, -12, 1, -38) or UDim2.new(1, -12, 1, -68)
+    local targetContainerPos = isTabMinimized and UDim2.new(0, 6, 0, 34) or UDim2.new(0, 6, 0, 64)
+    
     TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize}):Play()
+    TweenService:Create(container, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetContainerSize, Position = targetContainerPos}):Play()
     
-    container.Visible = not isCompact
-    compactBtn.Text = isCompact and "➕" or "➖"
+    tabBar.Visible = not isTabMinimized
+    minimizeTabBtn.Text = isTabMinimized and "➕" or "➖"
 end)
 
-closeBtn.MouseButton1Click:Connect(function()
-    -- Smooth transition menyembunyikan menu utama menjadi Icon Kotak Melayang
+-- LOGIKA MINIMIZE PENUH MENJADI FLOATING ICON (Gaya Delta)
+minimizeFullBtn.MouseButton1Click:Connect(function()
     TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.new(0, 0, 0, 0)}):Play()
     task.wait(0.2)
     mainFrame.Visible = false
@@ -261,20 +259,18 @@ end)
 floatIcon.MouseButton1Click:Connect(function()
     floatIcon.Visible = false
     mainFrame.Visible = true
-    local targetSize = isCompact and UDim2.new(0, 240, 0, 62) or UDim2.new(0, 240, 0, 210)
+    local targetSize = isTabMinimized and UDim2.new(0, 240, 0, 150) or UDim2.new(0, 240, 0, 210)
     TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = targetSize}):Play()
 end)
 
--- PANGGIL MODUL LUAR (SESUAIKAN REPO GITHUB)
+-- LOAD MODUL LUAR DARI GITHUB
 local baseURL = "https://raw.githubusercontent.com/DarkShadowFSAlff/Roblox-script-/main/"
 
 local function loadModule(fileName)
     local success, res = pcall(function()
         return loadstring(game:HttpGet(baseURL .. fileName))()
     end)
-    if not success then
-        warn("Gagal memuat modul: " .. fileName)
-    end
+    if not success then warn("Gagal memuat modul: " .. fileName) end
     return res
 end
 
@@ -287,111 +283,3 @@ if WaypointMod then WaypointMod.Init(wpTab, player) end
 if PerformanceMod then PerformanceMod.Init(perfTab, Lighting, Players, player) end
 if SpeedMod then SpeedMod.Init(spdTab, player, RunService) end
 if GameMod then GameMod.Init(gameTab, player) end
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-frame.Active = true
-frame.Draggable = true
-frame.Parent = screenGui
-
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 26)
-header.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
-header.Parent = frame
-
-local minBtn = Instance.new("TextButton")
-minBtn.Size = UDim2.new(0, 22, 0, 22)
-minBtn.Position = UDim2.new(0.5, -23, 0, 2)
-minBtn.Text = "-"
-minBtn.Parent = header
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 22, 0, 22)
-closeBtn.Position = UDim2.new(0.5, 1, 0, 2)
-closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-closeBtn.Text = "X"
-closeBtn.Parent = header
-
--- 4 Tab Header (Versi Full)
-local tabHeader = Instance.new("Frame")
-tabHeader.Size = UDim2.new(1, 0, 0, 30)
-tabHeader.Position = UDim2.new(0, 0, 0, 26)
-tabHeader.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-tabHeader.Parent = frame
-
-local tab1Btn = Instance.new("TextButton", tabHeader)
-tab1Btn.Size = UDim2.new(0.25, 0, 1, 0)
-tab1Btn.Text = "📍 Wp"
-local tab2Btn = Instance.new("TextButton", tabHeader)
-tab2Btn.Size = UDim2.new(0.25, 0, 1, 0)
-tab2Btn.Position = UDim2.new(0.25, 0, 0, 0)
-tab2Btn.Text = "⚡ Perf"
-local tab3Btn = Instance.new("TextButton", tabHeader)
-tab3Btn.Size = UDim2.new(0.25, 0, 1, 0)
-tab3Btn.Position = UDim2.new(0.50, 0, 0, 0)
-tab3Btn.Text = "🚀 Spd"
-local tab4Btn = Instance.new("TextButton", tabHeader)
-tab4Btn.Size = UDim2.new(0.25, 0, 1, 0)
-tab4Btn.Position = UDim2.new(0.75, 0, 0, 0)
-tab4Btn.Text = "✨ Game"
-
-local pageContainer = Instance.new("Frame", frame)
-pageContainer.Size = UDim2.new(1, 0, 1, -56)
-pageContainer.Position = UDim2.new(0, 0, 0, 56)
-pageContainer.BackgroundTransparency = 1
-
-local pages = {}
-for i = 1, 4 do
-    local scrolling = Instance.new("ScrollingFrame", pageContainer)
-    scrolling.Size = UDim2.new(1, 0, 1, 0)
-    scrolling.BackgroundTransparency = 1
-    scrolling.Visible = (i == 1)
-    scrolling.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    
-    local list = Instance.new("UIListLayout", scrolling)
-    pages[i] = scrolling
-end
-
-tab1Btn.MouseButton1Click:Connect(function()
-    pages[1].Visible, pages[2].Visible, pages[3].Visible, pages[4].Visible = true, false, false, false
-end)
-tab2Btn.MouseButton1Click:Connect(function()
-    pages[1].Visible, pages[2].Visible, pages[3].Visible, pages[4].Visible = false, true, false, false
-end)
-tab3Btn.MouseButton1Click:Connect(function()
-    pages[1].Visible, pages[2].Visible, pages[3].Visible, pages[4].Visible = false, false, true, false
-end)
-tab4Btn.MouseButton1Click:Connect(function()
-    pages[1].Visible, pages[2].Visible, pages[3].Visible, pages[4].Visible = false, false, false, true
-end)
-
--- Memuat SEMUA Modul Termasuk Modul Khusus Game
-pcall(function()
-    local wpMod = loadstring(game:HttpGet(baseURL .. "waypoint.lua"))()
-    wpMod.Init(pages[1], player, HttpService)
-end)
-
-pcall(function()
-    local perfMod = loadstring(game:HttpGet(baseURL .. "performance.lua"))()
-    perfMod.Init(pages[2], Lighting, Players, player)
-end)
-
-pcall(function()
-    local speedMod = loadstring(game:HttpGet(baseURL .. "speed.lua"))()
-    speedMod.Init(pages[3], player, RunService)
-end)
-
-pcall(function()
-    local gameMod = loadstring(game:HttpGet(baseURL .. "game_features.lua"))()
-    gameMod.Init(pages[4], player)
-end)
-
-minBtn.MouseButton1Click:Connect(function()
-    frame.Visible = false
-    minIcon.Visible = true
-end)
-minIcon.MouseButton1Click:Connect(function()
-    frame.Visible = true
-    minIcon.Visible = false
-end)
-closeBtn.MouseButton1Click:Connect(function()
-    screenGui:Destroy()
-end)
